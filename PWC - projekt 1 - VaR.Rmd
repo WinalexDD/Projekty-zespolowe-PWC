@@ -1,0 +1,364 @@
+---
+title: "Zadanie 1 - PWC"
+author: "Aleksander Mackiewicz-Kubiak"
+date: "2024-11-12"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Pakiety
+
+```{r message=FALSE, warning=FALSE}
+library(tidyr)
+library(gamlss)
+library(dplyr)
+library(fitdistrplus)
+library(usefun)
+library(quantmod)
+library(scales)
+```
+
+## Dane
+
+### Preprocessing danych
+
+Dane, które wybieram to ceny zamknięcia indeksu giełdowego S&P 500 od 1 listopada 2021 roku do 30 października 2024 roku:
+
+```{r}
+getSymbols("^GSPC", src = "yahoo", from = "2021-11-01", to = "2024-10-30")
+```
+
+Tworzę z nich szereg czasowy:
+
+```{r echo=FALSE}
+sp500_close <- Cl(GSPC) 
+sp500_ts <- ts(as.numeric(sp500_close), start = c(2021, 11), frequency = 252)  # 252 dni handlowe w roku
+dane<-sp500_ts
+str(dane)
+```
+
+Oraz sprawdzam ich podstawowe statystyki:
+
+```{r echo=FALSE}
+summary(dane)
+print_empty_line()
+sapply(dane, function(x) c(średnia = mean(x), odchylenie = sd(x), moda =as.numeric(names(which.max(table(dane))))))
+```
+
+Ponieważ jest to szereg czasowy indeksów, ze sprecyzowaną ilością dni handlowych w roku, to jest znikoma szansa na wystąpienie jakiś braków w danych, natomiast dla pewności upewniam się komendą anyNA:
+
+```{r}
+anyNA(dane)
+```
+Wartość FALSE oznacza, że w moich danych nie ma żadnych braków i są one kompletne.
+
+### Wykresy danych 
+
+Najpierw robię wykres ceny od czasu:
+
+```{r echo=FALSE}
+plot(dane, main = "Ceny zamknięcia S&P 500", ylab = "Cena", xlab = "Czas")
+```
+
+Oraz wyświetlam histogram tych danych:
+
+```{r echo=FALSE}
+hist(dane, xlab = "Cena", ylab = "Częstotliwość", main = "Histogram cen zamknięcia S&P 500")
+```
+Histogram pokazuje, że rozkład danych nie jest normalny, posiada jedną mode (nie jest bimodalny) oraz że jest prawoskośny. Oznacza to, że o wiele więcej wartości rozkładu znajduje się poniżej średniej, oraz że średnia będzie większa od mediany. Potwierdza to wykres ceny do czasu, gdzie widać jak wartości poszybowały do góry od 2023 roku. Również na górnym wykresie nie rzucają się w oczy żadne wartości odstające. 
+
+### Różnicowanie szeregu
+
+By móc wyliczyć miarę VaR dla moich danych, potrzebuje wpierw obliczyć potencjalny zysk lub stratę z inwestowania w S&P 500. Dlatego różnicuje mój szereg, i wyznaczam dzienną różnice między cenami indeksu, na podstawie których będę wyliczać potencjalną strate:
+
+```{r echo=FALSE}
+differ<-diff(sp500_close)[-1]
+plot(differ, main="Zróżnicowane ceny S&P 500")
+```
+
+Analogiczne wyliczam dzienne stopy zwrotu cen zamknięcia S&P 500, by móc VaR wyrażać w procentach:
+
+```{r echo=FALSE}
+simple_returns <- dailyReturn(sp500_close, type = "arithmetic")
+plot(simple_returns, main="Dzienne stopy zwrotu S&P 500")
+```
+
+## Wartości historyczne
+
+Pierwszą metodą policzenia miary VaR będzie wyliczenie jej jako kwantyla empirycznego z danych.
+
+### VaR jako wartość
+
+Dla $\alpha$=0.05:
+
+```{r echo=FALSE}
+quantile(differ, 0.05)
+```
+
+Dla $\alpha$=0.01:
+
+```{r echo=FALSE}
+quantile(differ, 0.01)
+```
+
+### VaR jako procent
+
+Dla $\alpha$=0.05:
+
+```{r echo=FALSE}
+percent(quantile(simple_returns, 0.05), accuracy = 0.01)
+```
+
+Dla $\alpha$=0.01:
+
+```{r echo=FALSE}
+percent(quantile(simple_returns, 0.01), accuracy = 0.01)
+```
+
+## Dopasowanie rozkładu normalnego
+
+Drugim sposobem będzie dopasowanie rozkładu normalnego do moich danych, i wyznaczenie VaR jako kwantyla tego rozkładu normalnego.
+
+### VaR jako wartość
+
+Paramentry dopasowanego rozkładu normalnego:
+
+```{r echo=FALSE, warning=FALSE}
+fitnorm1 <- fitdist(as.numeric(differ), "norm")
+fitnorm1$estimate
+```
+
+Jego wykresy diagnostyczne:
+
+```{r echo=FALSE}
+plot(fitnorm1)
+```
+
+I wartości VaR-u dla dopasowanego rozkładu normalnego:
+
+- $\alpha$=0.05:
+
+```{r echo=FALSE}
+qnorm(0.05, mean = fitnorm1$estimate["mean"], sd = fitnorm1$estimate["sd"])
+```
+
+- $\alpha$=0.01:
+
+```{r echo=FALSE}
+qnorm(0.01, mean = fitnorm1$estimate["mean"], sd = fitnorm1$estimate["sd"])
+```
+
+### VaR jako procent
+
+Analogiczne wpierw parametry dopasowanego rozkładu:
+
+```{r echo=FALSE, warning=FALSE}
+fitnorm2 <- fitdist(as.numeric(simple_returns), "norm")
+fitnorm2$estimate
+```
+
+Następnie wykresy diagnostyczne:
+
+```{r echo=FALSE}
+plot(fitnorm2)
+```
+
+I na koniec wartości VaR:
+
+- $\alpha$=0.05:
+
+```{r echo=FALSE}
+percent(qnorm(0.05, mean = fitnorm2$estimate["mean"], sd = fitnorm2$estimate["sd"]), accuracy=0.01)
+```
+
+- $\alpha$=0.01:
+
+```{r echo=FALSE}
+percent(qnorm(0.01, mean = fitnorm2$estimate["mean"], sd = fitnorm2$estimate["sd"]), accuracy=0.01)
+```
+
+### Wiarygodność tej metody 
+
+Problemem z powyższymi wynikami może być to, że rozkład normalny dopasowujemy na siłe do danych, które niekoniecznie mogą reprezentować taki rozkład. Takie usilne dopasowanie może czasami prowadzić do błednych wyników. Idealnym pokazem tego jest zastosowanie testu statycznego, który oceni nam dopasowanie naszych danych do rozkładu normalnego. Ja użyje testu Shapiro-Wilka, który ma hipoteze zerową o przynależności naszych danych do rozkładu normalnego:
+
+Wpierw dla danych wartościowych:
+
+```{r echo=FALSE}
+shapiro.test(as.numeric(differ))
+```
+
+I od razu dla danych procentowych:
+
+```{r echo=FALSE}
+shapiro.test(as.numeric(simple_returns))
+```
+W obu przypadkach p-value jest bardzo małe, co mocno sugeruje, że hipoteza zerowa jest błędna i nasze dane nie reprezentują rozkładu normalego, zatem można poddawać pod wątpliwość jakość wyliczonego w ten sposób VaR-u.
+
+## Dopasowanie dowolnego rozkładu
+
+Trzecim sposobem jest dopasowanie dowolnego rozkładu do naszych danych, i wyznaczenie VaR-u jako kwantyla tegoż rozkładu.
+
+### VaR jako wartość
+
+```{r include=FALSE}
+fitother1 <- fitDist(as.numeric(differ),type="realline")
+```
+
+Dopasowuje rozkład do danych o wartościach i patrze na wykres dopasowania rozkładu na histogramie:
+
+```{r echo=FALSE}
+density_name<-fitother1$family[1]
+parameters <-fitother1[fitother1$parameters]
+  
+hist(differ, freq=FALSE, xlab="Wartości", ylab="Gęstość", main="")
+  
+f<-function(x) do.call(paste0("d", density_name), c(list(x), parameters))
+curve(f(x), add=TRUE, col="blue", lwd=2)
+```
+
+Rozkład wygląda na dosyć dobrze dopasowany. Sprawdzam szczegóły jaki rozkład został tutaj dopasowany:
+
+```{r echo=FALSE}
+fitother1$family
+fitother1[fitother1$parameters]
+quantile_func1 <- get(paste0("q", fitother1$family[1]))
+```
+
+I wyliczam VaR jako kwantyle tego rozkładu:
+
+- $\alpha$=0.05:
+
+```{r echo=FALSE}
+quantile_func1(0.05, mu = fitother1$mu, sigma = fitother1$sigma, nu=fitother1$nu, tau=fitother1$tau)
+```
+
+- $\alpha$=0.01:
+
+```{r echo=FALSE}
+quantile_func1(0.01, mu = fitother1$mu.coefficients, sigma = fitother1$sigma, nu=fitother1$nu, tau=fitother1$tau)
+```
+
+### VaR jako procent
+
+```{r include=FALSE}
+fitother2 <- fitDist(as.numeric(simple_returns),type="realline")
+```
+
+Analogiczne postępuje dla danych procentowych, najpierw wykres dopasowania:
+
+```{r echo=FALSE}
+density_name<-fitother2$family[1]
+parameters <-fitother2[fitother2$parameters]
+  
+hist(simple_returns, freq=FALSE, xlab="Wartości", ylab="Gęstość", main="")
+  
+f<-function(x) do.call(paste0("d", density_name), c(list(x), parameters))
+curve(f(x), add=TRUE, col="blue", lwd=2)
+```
+
+Ponownie wygląda on dobrze, więc sprawdzam szczegóły rozkładu:
+
+```{r echo=FALSE}
+fitother2$family
+fitother2[fitother2$parameters]
+quantile_func2 <- get(paste0("q", fitother2$family[1]))
+```
+
+I wyliczam VaR jako kwantyle tego rozkładu:
+
+- $\alpha$ = 0.05:
+```{r echo=FALSE}
+percent(quantile_func2(0.05, mu = fitother2$mu, sigma = fitother2$sigma, nu=fitother2$nu), accuracy=0.01)
+```
+
+- $\alpha$ = 0.01:
+```{r echo=FALSE}
+percent(quantile_func2(0.01, mu = fitother2$mu, sigma = fitother2$sigma, nu=fitother2$nu), accuracy=0.01)
+```
+
+## Porównanie wyników
+
+### Wartościowych z $\alpha$=0.05:
+
+Metoda historyczna:
+
+```{r echo=FALSE}
+quantile(differ, 0.05)
+```
+
+Metoda z rozkładem normalnym:
+
+```{r echo=FALSE}
+qnorm(0.05, mean = fitnorm1$estimate["mean"], sd = fitnorm1$estimate["sd"])
+```
+
+Metoda z dopasowaniem rozkładu:
+
+```{r echo=FALSE}
+quantile_func1(0.05, mu = fitother1$mu, sigma = fitother1$sigma, nu=fitother1$nu, tau=fitother1$tau)
+```
+
+### Wartościowych z $\alpha$=0.01:
+
+Metoda historyczna:
+
+```{r echo=FALSE}
+quantile(differ, 0.01)
+```
+
+Metoda z rozkładem normalnym:
+
+```{r echo=FALSE}
+qnorm(0.01, mean = fitnorm1$estimate["mean"], sd = fitnorm1$estimate["sd"])
+```
+
+Metoda z dopasowaniem rozkładu:
+
+```{r echo=FALSE}
+quantile_func1(0.01, mu = fitother1$mu, sigma = fitother1$sigma, nu=fitother1$nu, tau=fitother1$tau)
+```
+
+### Procentowych z $\alpha$=0.05:
+
+Metoda historyczna:
+
+```{r echo=FALSE}
+percent(quantile(simple_returns, 0.05), accuracy = 0.01)
+```
+
+Metoda z rozkładem normalnym:
+
+```{r echo=FALSE}
+percent(qnorm(0.05, mean = fitnorm2$estimate["mean"], sd = fitnorm2$estimate["sd"]), accuracy=0.01)
+```
+
+Metoda z dopasowaniem rozkładu:
+
+```{r echo=FALSE}
+percent(quantile_func2(0.05, mu = fitother2$mu, sigma = fitother2$sigma, nu=fitother2$nu), accuracy=0.01)
+```
+
+### Procentowych z $\alpha$=0.01:
+
+Metoda historyczna:
+
+```{r echo=FALSE}
+percent(quantile(simple_returns, 0.01), accuracy = 0.01)
+```
+
+Metoda z rozkładem normalnym:
+
+```{r echo=FALSE}
+percent(qnorm(0.01, mean = fitnorm2$estimate["mean"], sd = fitnorm2$estimate["sd"]), accuracy=0.01)
+```
+
+Metoda z dopasowaniem rozkładu:
+
+```{r echo=FALSE}
+percent(quantile_func2(0.01, mu = fitother2$mu, sigma = fitother2$sigma, nu=fitother2$nu), accuracy=0.01)
+```
+
+## Interpretacja wyników
+
+W wynikach mamy bardzo duży przekrój zależności, niektóre wyniki się pokrywają, a niektóre różnią się o naprawde spore wartości. Najważniejsze jest jednak fakt, że w każdym przypadku VaR 99-procentowy wyznaczony dowolną metodą przekraczał wartością wszystkie VaR-y 95-procentowe, co daje nadzieje na dobre jakościowe wyniki. I dla wartości i dla procentów róznice między róznymi metodami dla VaR-u 95% są bardzo małe, a dla VaR-u 99% są o wiele większe, co też brzmi logicznie gdyż im dalszy ogon tym ciężej go dokładnie wymodelować. Z wyników wydaję się, że metoda z rozkładem normalnym daje "najdziwniejsze" i najbardziej niedoszacowane w porównaniu do reszty wyniki, poza jednym wyjątkiem dla wartości procentowych VaR-u 95 gdzie mamy jedyne pokrycie wartości. 
