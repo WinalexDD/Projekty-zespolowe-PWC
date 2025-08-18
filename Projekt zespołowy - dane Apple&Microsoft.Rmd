@@ -1,0 +1,386 @@
+---
+title: "Analiza porównawcza cen akcji Apple i Microsoft"
+author: "Mackiewicz-Kubiak Aleksander, Pągielska Marta"
+date: "2025-?-?"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document: default
+---
+
+## Pakiety
+
+Do analizy użyto następujących pakietów:
+
+```{r message=FALSE, warning=FALSE}
+library(tidyr)
+library(gamlss)
+library(dplyr)
+library(fitdistrplus)
+library(usefun)
+library(quantmod)
+library(scales)
+library(copula)
+library(psych)
+library(MVN)
+library(readr)
+library(xts)
+options(scipen = 999) # celem wyłączenia notacji naukowej
+pdf.options(encoding='ISOLatin2.enc')
+```
+
+## KROK 1
+
+Do analizy wybrano ceny zamknięcia akcji firm Apple i Microsoft, czyli dwóch potentatów na rynku elektronicznym.Dane pochodzące z okresu 4 lat (od 1 stycznia 2020 r. do 31 grundia 2023 r. włącznie). Ponieważ są to dwie globalne firmy z tej samej branży, to przewidujemy, że ceny ich akcji będą od siebie zależne, gdyż są to bezpośredni konkurenci na międzynarodowym rynku.
+
+Wczytanie danych z pliku CSV:
+
+```{r include=FALSE}
+getSymbols(c("AAPL", "MSFT"), src = "yahoo", from = "2020-01-01", to = "2023-12-31", interval="1d")
+
+AAPL <- Cl(AAPL)
+MSFT <- Cl(MSFT)
+```
+
+Wizualizacja cen zamknięcia akcji:
+
+```{r echo=FALSE}
+par(mfrow = c(2, 1))
+plot(Cl(AAPL), main="Historyczne ceny akcji Apple", type='l',  xlab = "Data", ylab = "Cena (USD)")
+plot(Cl(AAPL), main="Historyczne ceny akcji Microsoft", type='l', xlab = "Data", ylab = "Cena (USD)")
+```
+
+Dla obu firm widziwmy powolny wzsort wartości akcji na przestrzeni wybranych lat. Obie firmy jendak po drodze notowały mniejsze lub większe spadki. Na pierwszy rzuk oka oba wykresy są do siebie bardzo podobne, oba mają bardzo zbliżone okresu wzrostu i spadku wartości. Zatem oczekujemy dosyć dużej korelacji między tymi danymi.
+
+Straty obliczamy jako różnice wartości cen zamknięcia między kolejnymi dniami. Dodatkowo, w przypadku gdy mamy do czynienia z zyskami a nie stratami, to usuwamy te wartości, gdyż nie one są celem analizy. Dodatkowo, przekształcamy ujemne wartości start na wartości dodanie, by ułatwić dalsze analizy i obliczenia.
+
+```{r echo=FALSE}
+differ1<-diff(AAPL$AAPL.Close)[-1]
+differ1 <- differ1[differ1 < 0]
+differ1[differ1 < 0] <- -differ1[differ1 < 0]
+
+differ2<-diff(MSFT$MSFT.Close)[-1]
+differ2 <- differ2[differ2 < 0]
+differ2[differ2 < 0] <- -differ2[differ2 < 0]
+
+par(mfrow = c(2, 1))
+plot(differ1, type = "h", main = "Przekształcone straty Apple", ylab = "Strata (USD)")
+plot(differ2, type = "h", main = "Przekształcone straty Microsoft", ylab = "Strata (USD)")
+```
+
+Na wykresach strat można zaobserwować o wiele mniej podobieństw niż w oryginalnych wykresach danych. Jest to najprawdopobniej efektem podejścia, jakie przyjęliśmy o eliminacji wartości nieujemnych, co oznacza duże zmiejszenie ilości wartości.  
+
+## KROK 2
+
+Obliczenie podstawowych statystyk:
+
+```{r echo=FALSE}
+summary(differ1)
+print_empty_line()
+summary(differ2)
+```
+
+Widać znacząco różnice między maksymalnymi wartościami, co może wynikać z faktu, że ceny akcji Microsoft są średnio większe od cen akcji Apple. Mediany i średnie obu rozkładóW są różne, co również może być spowodowane przez różnice w średniej cenie na korzyść Microsoft. W obu szeregach strat mediany są mniejsze od średnich, co oznacza że oba rozkłady są prawoskośne, czego oczekujemy od rozkładów strat. Oba minima są powyżej 0, co oznacza, że poprzednie transformacje danych zadziałały tak jak chcieliśmy. 
+
+Problemem powyższych przekształceń jest fakt, że szeregi strat dla obu firm niekonieczne muszą być równej długości. Ponieważ naszym celem jest badanie zależności tych szeregów, należy zadbać by były one równej długości. W tym celu wyselekcjonujemy dane z dni, w których obie firmy zanotowały stratę, by te szeregi były jak najbardziej porównywalne, jednocześnie sprawdzając, czy nie usuniemy zbyt dużo danych.
+
+```{r echo=FALSE}
+common_mask <- differ1 & differ2
+
+aligned_loss1 <- differ1[common_mask]
+aligned_loss2 <- differ2[common_mask]
+print("Długość nowych szeregów strat:"); length(aligned_loss2)
+print_empty_line()
+print("Ilość straconych wartości dla dłuższego szeregu"); max(length(differ2)-length(aligned_loss2), length(differ1)-length(aligned_loss1))
+```
+
+Nowe, równe szeregi mająwystarczającą liczbe obserwacji, by móc przeprowadzać dla nich analizy.
+
+Dopasowanie rozkładów:
+
+```{r include=FALSE}
+fit1 <- fitDist(as.numeric(differ1),type="realline")
+```
+
+```{r echo=FALSE}
+fit1
+plot(fit1)
+```
+
+Dopasowany rozkład do wartości strat dla firmy Apple to rozkład SEP3. Zwarte skupienie punktów na pierwszym wykresie sugeruje brak istotnej zależności reszt od wartości dopasowanych. Rozkład reszt względem indeksu wskazuje na losowość błędów, bez systematyczności czy struktury czasowej. Estymacja gęstości rozkładu reszt pokazuje, że reszty mają rozkład normalny. Porównując reszty z rozkładem normalnym, widać brak odchyleń od linii prostej, co wskazuje że rozkład reszt faktycznie jest rozkładem normalnym.
+
+```{r include=FALSE}
+fit2 <- fitDist(as.numeric(differ2),type="realline")
+```
+
+```{r echo=FALSE}
+fit2
+plot(fit2)
+```
+
+Dopasowany rozkład do wartości strat dla firmy Microsoft to ponownie rozkład SEP3, z lekko zmienionymi parametrami. Tak jak przy poprzednim dopasowaniu, zwarte skupienie punktów na pierwszym wykresie sugeruje brak istotnej zależności reszt od wartości dopasowanych a rozkład reszt względem indeksu sugeruje losowość błędów. Ponownie rozkład reszt w tym dopasowaniu jest rozkładem normalnym, co widać na estymacji gęstości oraz wykresie kwantyl-kwantyl.
+
+Obliczenie korelacji dla przekształconych strat i pełnych danych cenowych:
+
+```{r echo=FALSE}
+print("Współczynnik Pearsona")
+cor(aligned_loss1, aligned_loss2, method = "pearson")
+print_empty_line()
+print("Współczynnik Spearmana")
+cor(aligned_loss1, aligned_loss2, method = "spearman")
+print_empty_line()
+print("Współczynnik Kendalla")
+cor(aligned_loss1, aligned_loss2, method = "kendall")
+```
+
+Korelacja dla przekształconych strat jest niska, co sugeruje, że spadki cen nie mają ze sobą znaczącej zależności liniowej. Zgadza się to z wykresami reszt, które nie sprawiały wrażenia podobnych do siebie. 
+
+```{r echo=FALSE}
+print("Współczynnik Pearsona")
+cor(AAPL$AAPL.Close, MSFT$MSFT.Close, method = "pearson")
+print_empty_line()
+print("Współczynnik Spearmana")
+cor(AAPL$AAPL.Close, MSFT$MSFT.Close, method = "spearman")
+print_empty_line()
+print("Współczynnik Kendalla")
+cor(AAPL$AAPL.Close, MSFT$MSFT.Close, method = "kendall")
+```
+Korelacja dla cen zamknięcia jest wysoka, pomimo słabej korelacji między stratami. Zatem ceny akcji mają ze sobą znaczącą zależność liniową, tak jak przewidywaliśmy na podstawie wykresów wartości cen zamknięcia akcji. Fakt, że korelacja między stratami nie jest tak silna sugeruje, że przekształcenia którym poddaliśmy dane, były znaczące i mogły negatywnie wpłynąć na ich zależność. 
+
+## KROK 3
+
+Dopasowanie modeli kopuły:
+
+```{r echo=FALSE}
+aligned_loss1 <- coredata(aligned_loss1)
+aligned_loss2 <- coredata(aligned_loss2)
+u1 <- pobs(aligned_loss1)
+u2 <- pobs(aligned_loss2)
+data_matrix <- cbind(u1, u2)
+data_matrix <- na.omit(data_matrix)
+head(data_matrix)
+print_empty_line()
+summary(data_matrix)
+```
+
+```{r include=FALSE}
+gumbel_copula <- gumbelCopula(dim = 2)
+frank_copula <- frankCopula(dim = 2)
+clayton_copula <- claytonCopula(dim = 2)
+normal_copula <- normalCopula(dim = 2)
+t_copula <- tCopula(dim = 2, dispstr = "un")
+```
+
+1. Gumbela:
+
+```{r echo=FALSE}
+fit_gumbel <- fitCopula(gumbel_copula, data_matrix)
+summary(fit_gumbel)
+```
+
+2. Franka:
+
+```{r echo=FALSE}
+fit_frank <- fitCopula(frank_copula, data_matrix)
+summary(fit_frank)
+```
+
+3. Claytona:
+
+```{r echo=FALSE}
+fit_clayton <- fitCopula(clayton_copula, data_matrix)
+summary(fit_clayton)
+```
+
+4. Normalna:
+
+```{r echo=FALSE}
+fit_normal <- fitCopula(normal_copula, data_matrix)
+summary(fit_normal)
+```
+
+5. T-studenta:
+
+```{r echo=FALSE}
+fit_t <- fitCopula(t_copula, data_matrix)
+summary(fit_t)
+```
+
+```{r echo=FALSE}
+LL <- c(logLik(fit_gumbel),logLik(fit_frank),logLik(fit_clayton),logLik(fit_normal),logLik(fit_t))
+names(LL) <- c("fit_gumbel", "fit_frank", "fit_clayton", "fit_normal", "fit_t")
+print("Kryterium loglikelihood")
+print(LL)
+print_empty_line()
+AIC <- c(AIC(fit_gumbel),AIC(fit_frank),AIC(fit_clayton),AIC(fit_normal),AIC(fit_t))
+names(AIC) <- c("fit_gumbel", "fit_frank", "fit_clayton", "fit_normal", "fit_t")
+print("Kryterium AIC")
+print(AIC)
+print_empty_line()
+BIC <- c(BIC(fit_gumbel),BIC(fit_frank),BIC(fit_clayton),BIC(fit_normal),BIC(fit_t))
+names(BIC) <- c("fit_gumbel", "fit_frank", "fit_clayton", "fit_normal", "fit_t")
+print("Kryterium BIC")
+print(BIC)
+```
+
+Wyznaczenie najlepiej dopasowanej kopuły względem:
+
+1. Kryterium loglikelihood(im większa wartość, tym lepiej dopasowany model):
+
+```{r echo=FALSE}
+names(LL)[which.max(LL)]; max(LL)
+```
+
+2. Kryterium AIC(im mniejsza wartość, tym lepiej dopasowany model):
+
+```{r echo=FALSE}
+names(AIC)[which.min(AIC)]; min(AIC)
+```
+
+3. Kryterium BIC(im mniejsza wartość, tym lepiej dopasowany model):
+
+```{r echo=FALSE}
+names(BIC)[which.min(BIC)]; min(BIC)
+```
+
+Wszystkie kryteria wybrały kopułę Franka jako tą najlepiej dopasowaną. Wizualizacja najlepiej dopasowanej kopuły:
+
+```{r echo=FALSE}
+par(mfrow = c(1, 2))
+simulated_copula <- rCopula(nrow(data_matrix), get(names(AIC)[which.min(AIC)])@copula)
+
+u1 <- seq(0, 1, length.out = 100)
+u2 <- seq(0, 1, length.out = 100)
+grid <- expand.grid(u1, u2)
+
+contour(u1, u2, matrix(dCopula(as.matrix(grid), fit_normal@copula), nrow = 100), 
+        main = "Wykres konturowy kopuły", 
+        xlab = "U1", ylab = "U2", col = "blue")
+
+persp(fit_gumbel@copula, dCopula, main = "Dopasowana kopuła Franka")
+```
+
+Wykonanie testu Mardia:
+
+```{r echo=FALSE}
+mvn(data = as.matrix(data.frame(aligned_loss1, aligned_loss2)), mvnTest = "mardia")
+```
+
+Test Mardia wskazuje, że dane nie pochodzą z dwuwymiarowego rozkładu normalnego.
+
+## KROK 3
+
+Obliczamy wartość zagrożoną (VaR) portfela składającego się z dwóch składników, korzystając zarówno z danych rzeczywistych, jak i danych wygenerowanych na podstawie najlepiej dopasowanej kopuły. Najpierw generowane są dane z dopasowanych rozkładów brzegowych, a później dane z kopuły. Następnie dla każdej próbki i poziomu istotności ($\alpha$) obliczane są optymalne wagi ($\beta$), które minimalizują ryzyko portfela. Obliczenia są wykonywane na dwa sposoby: za pomocą funkcji optymalizującej (optimize) oraz ręcznie, za pomocą iteracji po wszystkich możliwych wartościach $\beta$ z określoną odległością przedziału. Wszystko to, aby upewnić się, że wyniki są spójne i aby móc porównać ich dokładność w różnych sytuacjach. 
+
+```{r include=FALSE}
+compute_var <- function(beta, x, alpha = 0.05) {
+  portfolio <- beta * x[,1] + (1 - beta) * x[,2]
+  return(quantile(portfolio, probs = alpha))
+}
+```
+
+```{r echo=FALSE}
+values_N <- c(500, 1000)
+values_Alpha <- c(0.95, 0.99)  
+betas <- seq(0, 1, by = 0.0001)
+set.seed(5463436)
+
+for (N in values_N) {
+  for (alp in values_Alpha) {
+
+    simulated_values1 <- do.call(paste0("r", fit1$family[1]), c(list(N), fit1[fit1$parameters]))
+    simulated_values2 <- do.call(paste0("r", fit2$family[1]), c(list(N), fit2[fit2$parameters]))
+    simulated_values_dist <- matrix(c(simulated_values1, simulated_values2), nrow = N, ncol = 2)
+    
+    simulated_values_copula <- rCopula(N, get(names(AIC)[which.min(AIC)])@copula)
+    
+    simulated_values1 <- do.call(paste0("q", fit1$family[1]), c(list(simulated_values_copula[, 1]), fit1[fit1$parameters]))
+    simulated_values2 <- do.call(paste0("q", fit2$family[1]), c(list(simulated_values_copula[, 2]), fit2[fit2$parameters]))
+    simulated_values_copula_changed <- data.frame(x1 = simulated_values1, x2 = simulated_values2)
+
+    result_dist <- optimize(compute_var, interval = c(0, 1), x = simulated_values_dist, alpha = alp)
+    cat("Wartości Beta (z funkcji optimize) z danych empirycznych dla N =", N, "i Alpha =", alp, 
+        "wynosi", round(result_dist$minimum,6))
+    print_empty_line()
+    
+    var_results1 <- data.frame(Beta = numeric(length(betas)), VaR = numeric(length(betas)))
+
+    for (i in seq_along(betas)) {
+      var_results1[i, ] <- c(betas[i], compute_var(betas[i], x = simulated_values_dist, alp))
+    }
+    sorted_var_results1 <- var_results1[order(var_results1$VaR), ]
+    
+    cat("Wartości Beta (liczona ręcznie) z danych empirycznych dla N =", N, "i Alpha =", alp, "wynosi", round(sorted_var_results1$Beta[1],6), "\n")
+    
+    result_copula <- optimize(compute_var, interval = c(0, 1), x = simulated_values_copula_changed, alpha = alp)
+    cat("Wartości Beta (z funkcji optimize) z danych z kopuły dla N =", N, "i Alpha =", alp, 
+        "wynosi", round(result_copula$minimum,6))
+    print_empty_line()
+
+    var_results2 <- data.frame(Beta = numeric(length(betas)) ,VaR = numeric(length(betas)))
+
+    for (i in seq_along(betas)) {
+      var_results2[i, ] <- c(betas[i], compute_var(betas[i], x = simulated_values_copula_changed, alp))
+    }
+    
+    sorted_var_results2 <- var_results2[order(var_results2$VaR), ]
+
+    cat("Wartości Beta (liczona ręcznie) z danych z kopuły dla N =", N, "i Alpha =", alp, "wynosi", round(sorted_var_results2$Beta[1],6), "\n")
+    print_empty_line()
+    
+  }
+}
+```
+
+```{r echo=FALSE}
+values_N <- c(500, 1000)
+values_Alpha <- c(0.95, 0.99)  
+betas <- seq(0, 1, by = 0.0001)
+set.seed(5463436)
+
+for (N in values_N) {
+  for (alp in values_Alpha) {
+
+    simulated_values1 <- do.call(paste0("r", fit1$family[1]), c(list(N), fit1[fit1$parameters]))
+    simulated_values2 <- do.call(paste0("r", fit2$family[1]), c(list(N), fit2[fit2$parameters]))
+    simulated_values_dist <- matrix(c(simulated_values1, simulated_values2), nrow = N, ncol = 2)
+    
+    simulated_values_copula <- rCopula(N, get(names(AIC)[which.min(AIC)])@copula)
+    
+    simulated_values1 <- do.call(paste0("q", fit1$family[1]), c(list(simulated_values_copula[, 1]), fit1[fit1$parameters]))
+    simulated_values2 <- do.call(paste0("q", fit2$family[1]), c(list(simulated_values_copula[, 2]), fit2[fit2$parameters]))
+    simulated_values_copula_changed <- data.frame(x1 = simulated_values1, x2 = simulated_values2)
+
+    result_dist <- optimize(compute_var, interval = c(0, 1), x = simulated_values_dist, alpha = alp)
+    cat("Wartości VaR (z funkcji optimize) z danych empirycznych dla N =", N, "i Alpha =", alp, 
+        "wynosi", round(result_dist$objective,6))
+    print_empty_line()
+    
+    var_results1 <- data.frame(Beta = numeric(length(betas)), VaR = numeric(length(betas)))
+
+    for (i in seq_along(betas)) {
+      var_results1[i, ] <- c(betas[i], compute_var(betas[i], x = simulated_values_dist, alp))
+    }
+    sorted_var_results1 <- var_results1[order(var_results1$VaR), ]
+    
+    cat("Wartości VaR (liczona ręcznie) z danych empirycznych dla N =", N, "i Alpha =", alp, "wynosi", round(sorted_var_results1$VaR[1],6), "\n")
+    
+    result_copula <- optimize(compute_var, interval = c(0, 1), x = simulated_values_copula_changed, alpha = alp)
+    cat("Wartości VaR (z funkcji optimize) z danych z kopuły dla N =", N, "i Alpha =", alp, 
+        "wynosi", round(result_copula$objective,6))
+    print_empty_line()
+
+    var_results2 <- data.frame(Beta = numeric(length(betas)) ,VaR = numeric(length(betas)))
+
+    for (i in seq_along(betas)) {
+      var_results2[i, ] <- c(betas[i], compute_var(betas[i], x = simulated_values_copula_changed, alp))
+    }
+    
+    sorted_var_results2 <- var_results2[order(var_results2$VaR), ]
+
+    cat("Wartości VaR (liczona ręcznie) z danych z kopuły dla N =", N, "i Alpha =", alp, "wynosi", round(sorted_var_results2$VaR[1],6), "\n")
+    print_empty_line()
+    
+  }
+}
+```
