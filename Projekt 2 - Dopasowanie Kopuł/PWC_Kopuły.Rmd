@@ -313,3 +313,4 @@ print(result_mardia)
 ```
 
 Z wykresu kwantyl-kwantyl mogę odczytać, że kwantyle moich danych pasują do teoretycznych kwantyli dwuwymiarowego rozkładu normalnego, z pewnymi niedopasowaniami na ogonach. Z wartości testu mogę odczytać duże p-value (tutaj napisanie jako probability) dla skośności moich danych, co daje przyjęcie hipotezy zerowej, że moje dane są symetryczne jak wielowymiarowy rozkład normalny. Natomiast p-value dla kurtozy jest już poniżej poziomu istotności 0.05, co powoduje odrzucenie hipotezy zerowej, że moje dane mają kutroze podobną do wielowymiarowego rozkład normalnego, zatem końcowo test sugeruje że mimo symetryczności mojego rozkładu nie jest on wielowymiarowym rozkładem normalnym. Ten wniosek zgadza się z cała poprzednią analizą moich zmiennych.
+
